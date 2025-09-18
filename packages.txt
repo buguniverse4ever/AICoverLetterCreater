@@ -1,0 +1,5 @@
+texlive-latex-extra
+texlive-fonts-recommended
+texlive-fonts-extra
+texlive-lang-german
+latexmk
