@@ -2,7 +2,7 @@
 import io
 import textwrap
 import subprocess
-import tempfile
+import tempfile>
 import shutil
 from pathlib import Path
 from typing import Optional, Tuple
@@ -391,26 +391,29 @@ with col1:
             st.text_area("CV-Text", (cv_text or "")[:5000], height=200)
 
 with col2:
+    # --- Stellenanzeige Eingabe (state-fähig) ---
     job_text = st.text_area(
         "Stellenanzeige (Text)",
+        key="job_text",
         placeholder="Füge hier die vollständige Stellenanzeige ein …",
         height=260
     )
 
-# Anschreiben aus URL laden
-st.subheader("🌐 Anschreiben aus URL (optional)")
+# 🌐 Stellenanzeige aus URL laden (optional)
+st.subheader("🌐 Stellenanzeige aus URL (optional)")
 url_col, load_btn_col = st.columns([3, 1])
 with url_col:
-    letter_url = st.text_input("URL, aus der das Anschreiben geladen werden soll (optional)", placeholder="https://…")
+    jd_url = st.text_input("URL der Stellenanzeige", placeholder="https://…")
 with load_btn_col:
-    if st.button("Anschreiben von URL laden", use_container_width=True):
-        if not letter_url:
+    if st.button("Anzeige von URL laden", use_container_width=True):
+        if not jd_url:
             st.warning("Bitte zuerst eine URL eingeben.")
         else:
-            loaded_text = fetch_text_from_url(letter_url)
+            loaded_text = fetch_text_from_url(jd_url)
             if loaded_text:
-                st.session_state.letter_text = loaded_text
-                st.success("Anschreiben aus URL geladen.")
+                st.session_state["job_text"] = loaded_text
+                st.session_state.job_text_cache = truncate(loaded_text)
+                st.success("Stellenanzeige aus URL geladen.")
 
 # LaTeX-Template: Upload oder Default bearbeiten
 with st.expander("📄 LaTeX-Template (optional – für Template-PDF)", expanded=False):
@@ -509,7 +512,7 @@ with qa_left:
             cv_src = truncate(st.session_state.cv_text_cache or cv_text)
             job_src = truncate(st.session_state.job_text_cache or job_text)
             if not (cv_src and job_src):
-                st.warning("Bitte zuerst CV-Text und Stellenanzeige bereitstellen (Upload/Eingabe).")
+                st.warning("Bitte zuerst CV-Text und Stellenanzeige bereitstellen (Upload/Eingabe oder URL).")
             else:
                 qa_user = build_qa_user_prompt(cv_src, job_src, st.session_state.qa_question or "")
                 qa_sys = "Du bist ein präziser, deutschsprachiger Karriere-Assistent. Antworte knapp und konkret, ohne Bullet-Points, außer der Nutzer bittet ausdrücklich darum."
@@ -592,7 +595,7 @@ if clicked_refine:
 
 # Editor
 st.text_area(
-    "Anschreiben (editierbar oder durch URL-Import vorbelegt)",
+    "Anschreiben (editierbar)",
     key="letter_text",
     height=360,
     placeholder="Hier erscheint der Entwurf …",
@@ -664,7 +667,7 @@ if export_tex_col.button(
 st.markdown("---")
 st.caption(
     "Hinweise: "
-    "• Für beste Ergebnisse vollständigen CV-Text und die komplette Stellenanzeige verwenden. "
+    "• Für beste Ergebnisse vollständigen CV-Text und die komplette Stellenanzeige verwenden (oder die URL der Anzeige laden). "
     "• Der generierte Text ist ein Entwurf – bitte inhaltlich prüfen und ggf. anpassen. "
     "• LaTeX-Export benötigt lokal 'pdflatex' und die Klasse 'moderncv'. Ohne pdflatex kannst du die .tex-Datei herunterladen und lokal kompilieren. "
     "• PDF-Export (ohne LaTeX) nutzt Standardschrift; Sonderzeichen werden bei Bedarf ersetzt. "
