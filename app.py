@@ -80,7 +80,7 @@ Suspendisse potenti. Quisque vitae orci id risus gravida vulputate. Curabitur ut
 
 Praesent a magna sed nibh vestibulum volutpat. Etiam venenatis, lorem at dictum euismod, orci enim hendrerit sem, at ullamcorper urna lectus id nunc. Mauris pulvinar, lorem et mattis elementum, nunc justo luctus mi, a convallis lorem arcu a tortor. Donec ac nisl at quam ultricies varius, mit Fokus auf \textbf{Backend-Entwicklung}, \textbf{Datenverarbeitung} und \textbf{stabile Produktionssysteme}.
 
-Nullam nec purus non risus hendrerit sodales. Integer pulvinar sem ac nunc blandit, nec ultricies turpis pharetra. Pellentesque habitant morbi tristique senectus et netus et malesuada fames ac turpis egestas. Cras dictum tincidunt elit, in Preisum quam bibendum vitae. Ich freue mich darauf, \textbf{Prototypen iterativ zu entwickeln} und \textbf{messbaren Nutzen} zu schaffen.
+Nullam nec purus non risus hendrerit sodales. Integer pulvinar sem ac nunc blandit, nec ultricies turpis pharetra. Pellentesque habitant morbi tristique senectus et netus et malesuada fames ac turpis egestas. Cras dictum tincidunt elit, in pretium quam bibendum vitae. Ich freue mich darauf, \textbf{Prototypen iterativ zu entwickeln} und \textbf{messbaren Nutzen} zu schaffen.
 
 \makeletterclosing
 
@@ -323,7 +323,7 @@ def fetch_text_from_url(url: str) -> str:
         return ""
 
 
-# ---------- Callback: Prompts sicher neu generieren ----------
+# ---------- Callbacks ----------
 
 def regenerate_prompts():
     """Setzt die vier Prompt-Felder neu aus dem aktuellen Zustand."""
@@ -338,6 +338,20 @@ def regenerate_prompts():
     st.session_state["initial_user_prompt"] = build_initial_user_prompt(cv_src, job_src)
     st.session_state["refine_user_prompt"] = build_refine_user_prompt(current_letter, change_req, cv_src, job_src)
     st.session_state["latex_user_prompt"] = build_latex_fill_prompt(current_letter, cv_src, latex_template, job_src)
+
+
+def load_job_from_url(url: str):
+    """Lädt die Stellenanzeige von URL, setzt den Widget-State und rerunnt die App."""
+    if not url:
+        st.warning("Bitte zuerst eine URL eingeben.")
+        return
+    loaded_text = fetch_text_from_url(url)
+    if not loaded_text:
+        st.warning("Konnte keinen Text von der URL laden.")
+        return
+    st.session_state["job_text"] = loaded_text
+    st.session_state["job_text_cache"] = truncate(loaded_text)
+    st.rerun()
 
 
 # ------------------------------- Streamlit UI -------------------------------
@@ -365,8 +379,9 @@ for key, default in [
     # Q&A State
     ("qa_question", ""),
     ("qa_answer", ""),
-    # UI State (optional)
+    # UI State
     ("job_text", ""),
+    ("jd_url", ""),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -428,17 +443,14 @@ with col2:
 st.subheader("🌐 Stellenanzeige aus URL (optional)")
 url_col, load_btn_col = st.columns([3, 1])
 with url_col:
-    jd_url = st.text_input("URL der Stellenanzeige", placeholder="https://…")
+    st.text_input("URL der Stellenanzeige", key="jd_url", placeholder="https://…")
 with load_btn_col:
-    if st.button("Anzeige von URL laden", use_container_width=True):
-        if not jd_url:
-            st.warning("Bitte zuerst eine URL eingeben.")
-        else:
-            loaded_text = fetch_text_from_url(jd_url)
-            if loaded_text:
-                st.session_state["job_text"] = loaded_text
-                st.session_state.job_text_cache = truncate(loaded_text)
-                st.success("Stellenanzeige aus URL geladen.")
+    st.button(
+        "Anzeige von URL laden",
+        use_container_width=True,
+        on_click=load_job_from_url,
+        kwargs={"url": st.session_state.get("jd_url", "")},
+    )
 
 # LaTeX-Template: Upload oder Default bearbeiten
 with st.expander("📄 LaTeX-Template (optional – für Template-PDF)", expanded=False):
@@ -555,13 +567,13 @@ generate_col, refine_col, export_col, export_tex_col = st.columns([1, 1, 1, 1])
 clicked_generate = generate_col.button(
     "🪄 Anschreiben erstellen",
     use_container_width=True,
-    disabled=not (api_key and (st.session_state.get("cv_text_cache") or cv_file) and (st.session_state.get("job_text") or st.session_state.get("job_text_cache")))
+    disabled=not (api_key and (st.session_state.get("cv_text_cache") or cv_text) and (st.session_state.get("job_text") or st.session_state.get("job_text_cache")))
 )
 
 clicked_refine = refine_col.button(
     "🔁 Überarbeiten mit Änderungswünschen",
     use_container_width=True,
-    disabled=not (api_key and st.session_state.letter_text and (st.session_state.get("cv_text_cache") or cv_file) and (st.session_state.get("job_text") or st.session_state.get("job_text_cache")))
+    disabled=not (api_key and st.session_state.letter_text and (st.session_state.get("cv_text_cache") or cv_text) and (st.session_state.get("job_text") or st.session_state.get("job_text_cache")))
 )
 
 # --- Aktionen vor dem Editor ---
