@@ -222,7 +222,6 @@ def call_openai_chat(
     api_key: str,
     model: str,
     user_prompt: str,
-    temperature: float = 0.7,
     system_prompt: Optional[str] = None,
 ) -> str:
     """Ruft das OpenAI-Chat-API auf und gibt den reinen Text zurück."""
@@ -238,7 +237,6 @@ def call_openai_chat(
         resp = client.chat.completions.create(
             model=model,
             messages=messages,
-            temperature=temperature,
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception as e:
@@ -314,7 +312,6 @@ with st.sidebar:
         index=0,
         help="Wähle das Modell. Standard ist 'gpt-4o-mini'."
     )
-    temperature = st.slider("Kreativität (Temperature)", 0.0, 1.0, 0.7, 0.05)
 
 col1, col2 = st.columns(2, gap="large")
 
@@ -393,7 +390,7 @@ if clicked_generate:
         sys = build_system_prompt()
         user = build_initial_user_prompt(cv_src, job_src)
         with st.spinner("Erzeuge Anschreiben …"):
-            letter = call_openai_chat(api_key, model, user, temperature=temperature, system_prompt=sys)
+            letter = call_openai_chat(api_key, model, user, system_prompt=sys)
         if letter:
             st.session_state.letter_text = letter
             st.session_state.cv_text_cache = cv_src
@@ -415,7 +412,7 @@ if clicked_refine:
         )
         sys = build_system_prompt()
         with st.spinner("Überarbeite Anschreiben …"):
-            revised = call_openai_chat(api_key, model, user, temperature=temperature, system_prompt=sys)
+            revised = call_openai_chat(api_key, model, user, system_prompt=sys)
         if revised:
             st.session_state.letter_text = revised
             st.success("Anschreiben überarbeitet!")
@@ -456,7 +453,7 @@ if export_tex_col.button(
 
         user = build_latex_fill_prompt(letter_src, cv_src, latex_template, job_src)
         with st.spinner("Fülle LaTeX-Template über OpenAI …"):
-            latex_filled = call_openai_chat(api_key, model, user, temperature=0.2, system_prompt=None)
+            latex_filled = call_openai_chat(api_key, model, user, system_prompt=None)
 
         if latex_filled:
             latex_filled = strip_code_fences(latex_filled)
