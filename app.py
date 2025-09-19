@@ -147,7 +147,6 @@ def make_pdf(letter_text: str, title: str = "Anschreiben") -> bytes:
         pdf.multi_cell(0, 6, wrapped)
         pdf.ln(2)
 
-    # Robust für fpdf2 (bytes/bytearray) und altes pyfpdf (str)
     out = pdf.output(dest="S")
     if isinstance(out, (bytes, bytearray)):
         return bytes(out)
@@ -222,6 +221,20 @@ def build_latex_fill_prompt(letter_text: str, cv_text: str, latex_template: str,
         "=== LATEX TEMPLATE ===\n"
         f"{latex_template}\n\n"
         "Gib ausschließlich das finale LaTeX-Dokument aus."
+    )
+
+
+def build_qa_user_prompt(cv_text: str, job_text: str, question: str) -> str:
+    """Baut den User-Prompt für das Kontext-Q&A."""
+    return (
+        "Beantworte die folgende Frage präzise anhand der bereitgestellten Kontexte. "
+        "Wenn eine Information nicht in CV oder Anzeige steht, kennzeichne das klar.\n\n"
+        "=== STELLENANZEIGE ===\n"
+        f"{job_text}\n\n"
+        "=== LEBENSLAUF ===\n"
+        f"{cv_text}\n\n"
+        "=== FRAGE ===\n"
+        f"{question}\n"
     )
 
 
@@ -332,6 +345,9 @@ for key, default in [
     ("initial_user_prompt", ""),
     ("refine_user_prompt", ""),
     ("latex_user_prompt", ""),
+    # Q&A State
+    ("qa_question", ""),
+    ("qa_answer", ""),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -340,20 +356,7 @@ with st.sidebar:
     st.subheader("🔐 OpenAI")
     api_key = st.text_input("OpenAI API Key", type="password", help="Wird nur lokal in dieser Sitzung genutzt.")
 
-    # Ausführungsmodus -> setzt nur die Default-Auswahl im Dropdown
-    st.markdown("**Ausführungsmodus**")
-    run_mode = st.radio(
-        "Wähle den Modus",
-        options=[
-            "Langes Denken (GPT-5)",
-            "Schnell (GPT-5 mini)",
-            "Ultra-schnell (GPT-5 nano)",
-        ],
-        index=0,
-        help="Für gründlichere Antworten 'Langes Denken (GPT-5)' wählen. Für Kosten/Geschwindigkeit mini/nano."
-    )
-
-    # Modellliste: GPT-5 Trio + ursprüngliche Modelle
+    # Ein Dropdown für alle Modelle
     model_options = [
         "GPT-5",
         "GPT-5 mini",
@@ -363,19 +366,10 @@ with st.sidebar:
         "gpt-4.1-mini",
         "gpt-4.1",
     ]
-
-    # Default abhängig vom Run-Mode
-    if "Langes Denken" in run_mode:
-        default_index = model_options.index("GPT-5")
-    elif "Schnell (GPT-5 mini)" in run_mode:
-        default_index = model_options.index("GPT-5 mini")
-    else:
-        default_index = model_options.index("GPT-5 nano")
-
     model = st.selectbox(
         "Modell",
         options=model_options,
-        index=default_index,
+        index=0,  # Default: GPT-5
         help=(
             "GPT-5: bestes Reasoning & Agentic.\n"
             "GPT-5 mini: schneller, kosteneffizient.\n"
@@ -493,6 +487,43 @@ if st.button("🔄 Vorschläge übernehmen (aus aktuellen Eingaben neu generiere
         truncate(job_text or st.session_state.job_text_cache),
     )
     st.success("Prompts aktualisiert.")
+
+st.markdown("---")
+
+# 🧩 Kontext-Q&A
+st.subheader("🧩 Kontext-Q&A (Fragen zu CV & Stellenanzeige)")
+st.caption("Stelle hier kurze Fragen. Ich nutze dafür deinen CV-Text und die Stellenanzeige als Kontext.")
+
+qa_left, qa_right = st.columns(2, gap="large")
+with qa_left:
+    st.text_area(
+        "Deine Frage",
+        key="qa_question",
+        height=120,
+        placeholder="z. B.: Welche 3 Anforderungen erfülle ich bereits gut? Oder: Welche Keywords sollte ich in den Lebenslauf aufnehmen?"
+    )
+    if st.button("▶️ Frage senden"):
+        if not api_key:
+            st.error("Bitte gib zuerst deinen OpenAI API Key ein.")
+        else:
+            cv_src = truncate(st.session_state.cv_text_cache or cv_text)
+            job_src = truncate(st.session_state.job_text_cache or job_text)
+            if not (cv_src and job_src):
+                st.warning("Bitte zuerst CV-Text und Stellenanzeige bereitstellen (Upload/Eingabe).")
+            else:
+                qa_user = build_qa_user_prompt(cv_src, job_src, st.session_state.qa_question or "")
+                qa_sys = "Du bist ein präziser, deutschsprachiger Karriere-Assistent. Antworte knapp und konkret, ohne Bullet-Points, außer der Nutzer bittet ausdrücklich darum."
+                with st.spinner("Analysiere Kontext & beantworte Frage …"):
+                    answer = call_openai_chat(api_key, model, qa_user, system_prompt=qa_sys)
+                st.session_state.qa_answer = answer or "Keine Antwort erhalten."
+
+with qa_right:
+    st.text_area(
+        "Antwort",
+        value=st.session_state.qa_answer or "",
+        height=180,
+        placeholder="Hier erscheint die Antwort …"
+    )
 
 st.markdown("---")
 
