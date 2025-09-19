@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 import unicodedata
 import os
+import re
 
 import streamlit as st
 
@@ -82,7 +83,7 @@ Suspendisse potenti. Quisque vitae orci id risus gravida vulputate. Curabitur ut
 
 Praesent a magna sed nibh vestibulum volutpat. Etiam venenatis, lorem at dictum euismod, orci enim hendrerit sem, at ullamcorper urna lectus id nunc. Mauris pulvinar, lorem et mattis elementum, nunc justo luctus mi, a convallis lorem arcu a tortor. Donec ac nisl at quam ultricies varius, mit Fokus auf \textbf{Backend-Entwicklung}, \textbf{Datenverarbeitung} und \textbf{stabile Produktionssysteme}.
 
-Nullam nec purus non risus hendrerit sodales. Integer pulvinar sem ac nunc blandit, nec ultricies turpis pharetra. Pellentesque habitant morbi tristique senectus et netus et malesuada fames ac turpis egestas. Cras dictum tincidunt elit, in Preisum quam bibendum vitae. Ich freue mich darauf, \textbf{Prototypen iterativ zu entwickeln} und \textbf{messbaren Nutzen} zu schaffen.
+Nullam nec purus non risus hendrerit sodales. Integer pulvinar sem ac nunc blandit, nec ultricies turpis pharetra. Pellentesque habitant morbi tristique senectus et netus et malesuada fames ac turpis egestas. Cras dictum tincidunt elit, in pretium quam bibendum vitae. Ich freue mich darauf, \textbf{Prototypen iterativ zu entwickeln} und \textbf{messbaren Nutzen} zu schaffen.
 
 \makeletterclosing
 
@@ -171,7 +172,7 @@ def build_system_prompt() -> str:
         "Erstelle ein prägnantes, professionelles Anschreiben (max. 1 Seite) im formellen 'Sie'-Ton. "
         "Passe Inhalt und Schwerpunkt auf die Stellenanzeige an und nutze belegbare Punkte aus dem Lebenslauf. "
         "Struktur: Absender/Betreff optional weglassen, Einstieg mit klarer Motivation, 2–3 Absätze mit relevanten "
-        "Erfahrungen/Erfolern (quantifiziert, sofern möglich), Abschluss mit Call-to-Action und freundlichem Gruß. "
+        "Erfahrungen/Erfolgen (quantifiziert, sofern möglich), Abschluss mit Call-to-Action und freundlichem Gruß. "
         "Kein Markdown, keine Aufzählungszeichen, reiner Fließtext."
     )
 
@@ -208,11 +209,12 @@ def build_refine_user_prompt(current_letter: str, change_request: str, cv_text: 
 def build_latex_fill_prompt(letter_text: str, cv_text: str, latex_template: str, job_text: str) -> str:
     return (
         "Fülle das folgende LaTeX-Template (moderncv Brief) mit den bereitgestellten Inhalten.\n"
-        "- Gib ein KOMPLETTES, kompilierbares LaTeX-Dokument zurück (mit \\documentclass ... \\begin{document} ... \\end{document}).\n"
-        "- Ersetze den vorhandenen Blindtext (z. B. 'Lorem ipsum' zwischen \\makelettertitle und \\makeletterclosing) durch den Brieftext.\n"
-        "- Wenn ermittelbar, passe \\recipient{...}{...} und \\opening{...} passend an (sonst neutral lassen).\n"
+        "- GIB EIN KOMPLETTES, KOMPILIERBARES LATEX-DOKUMENT zurück (mit \\documentclass ... \\begin{document} ... \\end{document}).\n"
+        "- Ersetze 100% des vorhandenen Blindtexts zwischen \\makelettertitle und \\makeletterclosing durch den Brieftext.\n"
+        "- KEIN Lorem Ipsum, KEINE Platzhalter dürfen übrig bleiben.\n"
+        "- \\recipient{...}{...} und \\opening{...} gern passend setzen (sonst neutral lassen).\n"
         "- Belasse Präambel/Packages, sofern nicht notwendig, etwas zu ändern.\n"
-        "- ESCAPE alle LaTeX-Sonderzeichen (# $ % & _ { } ~ ^ \\) im eingefügten Text korrekt.\n"
+        "- ESCAPE alle LaTeX-Sonderzeichen (# $ % & _ { } ~ ^ \\\\) im eingefügten Text korrekt.\n"
         "- Keine Erklärungen, KEINE Markdown-Fences, NUR LaTeX.\n\n"
         "=== BRIEF (LETTER) ===\n"
         f"{letter_text}\n\n"
@@ -256,7 +258,6 @@ def call_openai_chat(
         st.error("Bitte installiere das OpenAI-Python-SDK: pip install openai")
         return ""
 
-    # Sicherstellen, dass die Umgebung UTF-8 bevorzugt
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
     def _do_call(u_prompt: str, s_prompt: Optional[str]) -> str:
@@ -271,17 +272,14 @@ def call_openai_chat(
         )
         return (resp.choices[0].message.content or "").strip()
 
-    # 1) Normaler Versuch
     try:
         return _do_call(user_prompt, system_prompt)
     except UnicodeEncodeError:
-        # 2) UTF-8 „Reinigung“, ohne Informationsverlust
         try:
             u2 = user_prompt.encode("utf-8", "ignore").decode("utf-8")
             s2 = system_prompt.encode("utf-8", "ignore").decode("utf-8") if system_prompt else None
             return _do_call(u2, s2)
         except UnicodeEncodeError:
-            # 3) Notlösung: ASCII-Transliteration (Umlaute -> weg)
             u3 = _transliterate_to_ascii(user_prompt)
             s3 = _transliterate_to_ascii(system_prompt) if system_prompt else None
             return _do_call(u3, s3)
@@ -521,7 +519,6 @@ with st.expander("🧠 Prompts (bearbeitbar)", expanded=False):
         st.text_area("User-Prompt: Anschreiben ÜBERARBEITEN", key="refine_user_prompt", height=220)
         st.text_area("User-Prompt: LaTeX füllen", key="latex_user_prompt", height=180)
 
-    # Button – einfache Funktion (kein Callback nötig)
     if st.button("🔄 Vorschläge übernehmen (aus aktuellen Eingaben neu generieren)"):
         regenerate_prompts()
         st.success("Prompts aktualisiert.")
@@ -586,7 +583,7 @@ clicked_generate = generate_col.button(
 clicked_refine = refine_col.button(
     "🔁 Überarbeiten mit Änderungswünschen",
     use_container_width=True,
-    disabled=not (api_key and st.session_state.letter_text and (st.session_state.get("cv_text_cache") or cv_text) and (st.session_state.get("job_text") or st.session_state.get("job_text_cache")))
+    disabled=not (api_key and st.session_state.letter_text)
 )
 
 # --- Aktionen vor dem Editor ---
@@ -595,10 +592,8 @@ if clicked_generate:
     if not api_key:
         st.error("Bitte gib zuerst deinen OpenAI API Key ein.")
     else:
-        # CV-Cache auffrischen, falls gerade geladen
         if cv_text:
             st.session_state.cv_text_cache = truncate(cv_text)
-        # Job-Cache auffrischen, falls Text vorhanden
         if st.session_state.get("job_text"):
             st.session_state.job_text_cache = truncate(st.session_state["job_text"])
 
@@ -622,18 +617,35 @@ if clicked_refine:
         if st.session_state.get("job_text"):
             st.session_state.job_text_cache = truncate(st.session_state["job_text"])
 
-        sys = st.session_state.sys_prompt or build_system_prompt()
-        user = st.session_state.refine_user_prompt or build_refine_user_prompt(
-            st.session_state.letter_text or "",
-            st.session_state.change_request or "Bitte stilistisch glätten & präzisieren.",
-            truncate(st.session_state.get("cv_text_cache", "")),
-            truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))),
-        )
+        # --- harte Validierung der Quellen ---
+        current_letter = (st.session_state.get("letter_text") or "").strip()
+        change_req = (st.session_state.get("change_request") or "Bitte stilistisch glätten & präzisieren.").strip()
+        cv_src = truncate(st.session_state.get("cv_text_cache", "")).strip()
+        job_src = truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))).strip()
 
-        revised = call_openai_chat(api_key, model_id, user, system_prompt=sys)
-        if revised:
-            st.session_state.letter_text = revised
-            st.success("Anschreiben überarbeitet!")
+        missing = []
+        if not current_letter:
+            missing.append("Anschreiben")
+        if not cv_src:
+            missing.append("CV-Text")
+        if not job_src:
+            missing.append("Stellenanzeige")
+
+        if missing:
+            st.warning("Bitte zuerst bereitstellen: " + ", ".join(missing) + ".")
+        else:
+            # IMMER frisch bauen: kein veraltetes/leer editiertes Promptfeld nutzen
+            user = build_refine_user_prompt(current_letter, change_req, cv_src, job_src)
+            sys = st.session_state.get("sys_prompt") or build_system_prompt()
+
+            with st.spinner("Überarbeite Anschreiben …"):
+                revised = call_openai_chat(api_key, model_id, user, system_prompt=sys)
+
+            if revised:
+                st.session_state.letter_text = revised
+                st.success("Anschreiben überarbeitet!")
+            else:
+                st.error("Keine Antwort vom Modell erhalten. Bitte erneut versuchen.")
 
 # Editor
 st.text_area(
@@ -655,7 +667,7 @@ if export_col.button("📄 Als PDF herunterladen", use_container_width=True, dis
             use_container_width=True,
         )
 
-# LaTeX-PDF-Export
+# LaTeX-PDF-Export (LLM, mit Guardrails)
 if export_tex_col.button(
     "🧪 LaTeX-PDF erzeugen",
     use_container_width=True,
@@ -670,12 +682,18 @@ if export_tex_col.button(
             st.session_state.get("latex_template", DEFAULT_LATEX_TEMPLATE),
             truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))),
         )
+        latex_filled = call_openai_chat(api_key, model_id, user, system_prompt=None) or ""
+        latex_filled = strip_code_fences(latex_filled).strip()
 
-        latex_filled = call_openai_chat(api_key, model_id, user, system_prompt=None)
+        # Guardrails: Struktur + keine Platzhalter
+        missing_structure = not ("\\documentclass" in latex_filled and "\\begin{document}" in latex_filled and "\\end{document}" in latex_filled)
+        still_placeholder = any(tok in latex_filled for tok in ["Lorem Ipsum", "Loremstraße", "Lorem Consulting GmbH"])
 
-        if latex_filled:
-            latex_filled = strip_code_fences(latex_filled)
-
+        if missing_structure:
+            st.error("Das Modell hat kein komplettes LaTeX-Dokument zurückgegeben. Bitte erneut versuchen oder den Prompt im Prompts-Panel schärfen.")
+        elif still_placeholder:
+            st.error("Es scheinen noch Platzhalter/Lorem-Texte im LaTeX zu sein. Bitte den Prompt im Prompts-Panel anpassen und erneut generieren.")
+        else:
             with st.expander("Vorschau: generiertes LaTeX", expanded=False):
                 st.code(latex_filled, language="latex")
 
