@@ -2,7 +2,7 @@
 import io
 import textwrap
 import subprocess
-import tempfile>
+import tempfile
 import shutil
 from pathlib import Path
 from typing import Optional, Tuple
