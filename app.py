@@ -9,6 +9,14 @@ from typing import Optional, Tuple
 
 import streamlit as st
 
+# --- URL-Import Dependencies ---
+try:
+    import requests
+    from bs4 import BeautifulSoup
+except Exception:
+    requests = None  # type: ignore
+    BeautifulSoup = None  # type: ignore
+
 # PDF-Reader: pypdf bevorzugt, PyPDF2 als Fallback
 try:
     from pypdf import PdfReader
@@ -18,13 +26,13 @@ except Exception:
     except Exception:
         PdfReader = None  # type: ignore
 
-# OpenAI SDK (aktuelles Schema)
+# OpenAI SDK
 try:
     from openai import OpenAI
 except Exception:
     OpenAI = None  # type: ignore
 
-# PDF-Erzeugung (normal, ohne LaTeX)
+# PDF-Erzeugung (ohne LaTeX)
 try:
     from fpdf import FPDF  # fpdf2
 except Exception:
@@ -275,6 +283,33 @@ def compile_latex_to_pdf(tex_source: str) -> Tuple[Optional[bytes], Optional[str
             return None, f"LaTeX-Kompilierungsfehler: {e}"
 
 
+def fetch_text_from_url(url: str) -> str:
+    """Liest Rohtext aus einer URL (HTML -> Text)."""
+    if not requests or not BeautifulSoup:
+        st.error("Bitte installiere 'requests' und 'beautifulsoup4' für den URL-Import (pip install requests beautifulsoup4).")
+        return ""
+    try:
+        resp = requests.get(url, timeout=20)
+        resp.raise_for_status()
+        content_type = resp.headers.get("Content-Type", "")
+        if "text" not in content_type and "html" not in content_type:
+            return resp.text.strip()[:200000]
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+        for tag in soup.select("header, footer, nav, aside"):
+            tag.decompose()
+
+        text = soup.get_text(separator="\n")
+        lines = [ln.strip() for ln in text.splitlines()]
+        lines = [ln for ln in lines if ln]
+        return "\n".join(lines)[:200000]
+    except Exception as e:
+        st.error(f"URL konnte nicht gelesen werden: {e}")
+        return ""
+
+
 # ------------------------------- Streamlit UI -------------------------------
 
 st.set_page_config(page_title="Anschreiben-Generator (CV + Stellenanzeige)", page_icon="✉️", layout="wide")
@@ -291,7 +326,12 @@ for key, default in [
     ("job_text_cache", ""),
     ("change_request", ""),
     ("latex_template", DEFAULT_LATEX_TEMPLATE),
-    ("_applied_latex_upload_hash", None),  # zur Erkennung neuer Uploads
+    ("_applied_latex_upload_hash", None),
+    # Prompt-Editor State
+    ("sys_prompt", ""),
+    ("initial_user_prompt", ""),
+    ("refine_user_prompt", ""),
+    ("latex_user_prompt", ""),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -299,17 +339,49 @@ for key, default in [
 with st.sidebar:
     st.subheader("🔐 OpenAI")
     api_key = st.text_input("OpenAI API Key", type="password", help="Wird nur lokal in dieser Sitzung genutzt.")
-    model = st.selectbox(
-        "GPT-Version",
+
+    # Ausführungsmodus -> setzt nur die Default-Auswahl im Dropdown
+    st.markdown("**Ausführungsmodus**")
+    run_mode = st.radio(
+        "Wähle den Modus",
         options=[
-            "gpt-4o-mini",  # Standard
-            "gpt-4o",
-            "gpt-4.1-mini",
-            "gpt-4.1",
-            "gpt-5"
+            "Langes Denken (GPT-5)",
+            "Schnell (GPT-5 mini)",
+            "Ultra-schnell (GPT-5 nano)",
         ],
         index=0,
-        help="Wähle das Modell. Standard ist 'gpt-4o-mini'."
+        help="Für gründlichere Antworten 'Langes Denken (GPT-5)' wählen. Für Kosten/Geschwindigkeit mini/nano."
+    )
+
+    # Modellliste: GPT-5 Trio + ursprüngliche Modelle
+    model_options = [
+        "GPT-5",
+        "GPT-5 mini",
+        "GPT-5 nano",
+        "gpt-4o-mini",
+        "gpt-4o",
+        "gpt-4.1-mini",
+        "gpt-4.1",
+    ]
+
+    # Default abhängig vom Run-Mode
+    if "Langes Denken" in run_mode:
+        default_index = model_options.index("GPT-5")
+    elif "Schnell (GPT-5 mini)" in run_mode:
+        default_index = model_options.index("GPT-5 mini")
+    else:
+        default_index = model_options.index("GPT-5 nano")
+
+    model = st.selectbox(
+        "Modell",
+        options=model_options,
+        index=default_index,
+        help=(
+            "GPT-5: bestes Reasoning & Agentic.\n"
+            "GPT-5 mini: schneller, kosteneffizient.\n"
+            "GPT-5 nano: am schnellsten & günstigsten.\n"
+            "Außerdem: gpt-4o / mini, gpt-4.1 / mini."
+        )
     )
 
 col1, col2 = st.columns(2, gap="large")
@@ -331,12 +403,26 @@ with col2:
         height=260
     )
 
+# Anschreiben aus URL laden
+st.subheader("🌐 Anschreiben aus URL (optional)")
+url_col, load_btn_col = st.columns([3, 1])
+with url_col:
+    letter_url = st.text_input("URL, aus der das Anschreiben geladen werden soll (optional)", placeholder="https://…")
+with load_btn_col:
+    if st.button("Anschreiben von URL laden", use_container_width=True):
+        if not letter_url:
+            st.warning("Bitte zuerst eine URL eingeben.")
+        else:
+            loaded_text = fetch_text_from_url(letter_url)
+            if loaded_text:
+                st.session_state.letter_text = loaded_text
+                st.success("Anschreiben aus URL geladen.")
+
 # LaTeX-Template: Upload oder Default bearbeiten
 with st.expander("📄 LaTeX-Template (optional – für Template-PDF)", expanded=False):
     up = st.file_uploader("LaTeX-Template hochladen (.tex)", type=["tex"], key="latex_uploader")
     if up is not None:
         content = up.read().decode("utf-8", errors="replace")
-        # einmalig anwenden je neuem Upload
         up_hash = (len(content), hash(content))
         if st.session_state["_applied_latex_upload_hash"] != up_hash:
             st.session_state["latex_template"] = content
@@ -350,6 +436,63 @@ with st.expander("📄 LaTeX-Template (optional – für Template-PDF)", expande
             height=260,
             help="Du kannst dieses Template anpassen. Ohne Upload wird dieses verwendet.",
         )
+
+st.markdown("---")
+
+# Prompt-Editor
+st.subheader("🧠 Prompts (bearbeitbar)")
+st.caption("Diese Prompts werden 1:1 an das Modell gesendet. Mit „Vorschläge übernehmen“ kannst du sie aus den aktuellen Eingaben neu generieren.")
+
+# Defaults nur setzen, wenn leer
+if not st.session_state.sys_prompt:
+    st.session_state.sys_prompt = build_system_prompt()
+if not st.session_state.initial_user_prompt:
+    st.session_state.initial_user_prompt = build_initial_user_prompt(
+        truncate(cv_text or st.session_state.cv_text_cache),
+        truncate(job_text or st.session_state.job_text_cache),
+    )
+if not st.session_state.refine_user_prompt:
+    st.session_state.refine_user_prompt = build_refine_user_prompt(
+        st.session_state.letter_text or "",
+        st.session_state.change_request or "Bitte stilistisch glätten & präzisieren.",
+        truncate(cv_text or st.session_state.cv_text_cache),
+        truncate(job_text or st.session_state.job_text_cache),
+    )
+if not st.session_state.latex_user_prompt:
+    st.session_state.latex_user_prompt = build_latex_fill_prompt(
+        st.session_state.letter_text or "",
+        truncate(cv_text or st.session_state.cv_text_cache),
+        st.session_state.latex_template,
+        truncate(job_text or st.session_state.job_text_cache),
+    )
+
+p1, p2 = st.columns(2, gap="large")
+with p1:
+    st.text_area("System-Prompt", key="sys_prompt", height=180)
+    st.text_area("User-Prompt: Anschreiben ERSTELLEN", key="initial_user_prompt", height=220)
+with p2:
+    st.text_area("User-Prompt: Anschreiben ÜBERARBEITEN", key="refine_user_prompt", height=220)
+    st.text_area("User-Prompt: LaTeX füllen", key="latex_user_prompt", height=180)
+
+if st.button("🔄 Vorschläge übernehmen (aus aktuellen Eingaben neu generieren)"):
+    st.session_state.sys_prompt = build_system_prompt()
+    st.session_state.initial_user_prompt = build_initial_user_prompt(
+        truncate(cv_text or st.session_state.cv_text_cache),
+        truncate(job_text or st.session_state.job_text_cache),
+    )
+    st.session_state.refine_user_prompt = build_refine_user_prompt(
+        st.session_state.letter_text or "",
+        st.session_state.change_request or "Bitte stilistisch glätten & präzisieren.",
+        truncate(cv_text or st.session_state.cv_text_cache),
+        truncate(job_text or st.session_state.job_text_cache),
+    )
+    st.session_state.latex_user_prompt = build_latex_fill_prompt(
+        st.session_state.letter_text or "",
+        truncate(cv_text or st.session_state.cv_text_cache),
+        st.session_state.latex_template,
+        truncate(job_text or st.session_state.job_text_cache),
+    )
+    st.success("Prompts aktualisiert.")
 
 st.markdown("---")
 
@@ -378,53 +521,53 @@ clicked_refine = refine_col.button(
     disabled=not (api_key and st.session_state.letter_text and (st.session_state.cv_text_cache or cv_text) and (st.session_state.job_text_cache or job_text))
 )
 
-# --- Aktionen VOR dem Editor ausführen ---
+# --- Aktionen vor dem Editor ---
 
 if clicked_generate:
     if not api_key:
         st.error("Bitte gib zuerst deinen OpenAI API Key ein.")
     else:
-        cv_src = truncate(cv_text or st.session_state.cv_text_cache)
-        job_src = truncate(job_text or st.session_state.job_text_cache)
-        sys = build_system_prompt()
-        user = build_initial_user_prompt(cv_src, job_src)
+        sys = st.session_state.sys_prompt
+        user = st.session_state.initial_user_prompt or build_initial_user_prompt(
+            truncate(cv_text or st.session_state.cv_text_cache),
+            truncate(job_text or st.session_state.job_text_cache),
+        )
+
         with st.spinner("Erzeuge Anschreiben …"):
             letter = call_openai_chat(api_key, model, user, system_prompt=sys)
         if letter:
             st.session_state.letter_text = letter
-            st.session_state.cv_text_cache = cv_src
-            st.session_state.job_text_cache = job_src
+            st.session_state.cv_text_cache = truncate(cv_text or st.session_state.cv_text_cache)
+            st.session_state.job_text_cache = truncate(job_text or st.session_state.job_text_cache)
             st.success("Anschreiben erstellt!")
 
 if clicked_refine:
     if not api_key:
         st.error("Bitte gib zuerst deinen OpenAI API Key ein.")
     else:
-        current_letter = st.session_state.letter_text
-        cv_src = truncate(cv_text or st.session_state.cv_text_cache)
-        job_src = truncate(job_text or st.session_state.job_text_cache)
-        user = build_refine_user_prompt(
-            current_letter,
+        sys = st.session_state.sys_prompt
+        user = st.session_state.refine_user_prompt or build_refine_user_prompt(
+            st.session_state.letter_text or "",
             st.session_state.change_request or "Bitte stilistisch glätten & präzisieren.",
-            cv_src,
-            job_src,
+            truncate(cv_text or st.session_state.cv_text_cache),
+            truncate(job_text or st.session_state.job_text_cache),
         )
-        sys = build_system_prompt()
+
         with st.spinner("Überarbeite Anschreiben …"):
             revised = call_openai_chat(api_key, model, user, system_prompt=sys)
         if revised:
             st.session_state.letter_text = revised
             st.success("Anschreiben überarbeitet!")
 
-# Editor (an Session-State gebunden)
+# Editor
 st.text_area(
-    "Anschreiben (editierbar)",
+    "Anschreiben (editierbar oder durch URL-Import vorbelegt)",
     key="letter_text",
     height=360,
     placeholder="Hier erscheint der Entwurf …",
 )
 
-# Normaler PDF-Export (ohne LaTeX)
+# Normaler PDF-Export
 if export_col.button("📄 Als PDF herunterladen", use_container_width=True, disabled=not st.session_state.letter_text):
     pdf_bytes = make_pdf(st.session_state.letter_text, title="Anschreiben")
     if pdf_bytes:
@@ -436,7 +579,7 @@ if export_col.button("📄 Als PDF herunterladen", use_container_width=True, dis
             use_container_width=True,
         )
 
-# LaTeX-PDF-Export (Template via OpenAI füllen)
+# LaTeX-PDF-Export
 if export_tex_col.button(
     "🧪 LaTeX-PDF erzeugen",
     use_container_width=True,
@@ -445,12 +588,13 @@ if export_tex_col.button(
     if not api_key:
         st.error("Bitte gib zuerst deinen OpenAI API Key ein.")
     else:
-        cv_src = truncate((cv_text or st.session_state.cv_text_cache))
-        job_src = truncate((job_text or st.session_state.job_text_cache))
-        letter_src = st.session_state.letter_text
-        latex_template = st.session_state.latex_template or DEFAULT_LATEX_TEMPLATE
+        user = st.session_state.latex_user_prompt or build_latex_fill_prompt(
+            st.session_state.letter_text or "",
+            truncate((cv_text or st.session_state.cv_text_cache)),
+            st.session_state.latex_template or DEFAULT_LATEX_TEMPLATE,
+            truncate((job_text or st.session_state.job_text_cache)),
+        )
 
-        user = build_latex_fill_prompt(letter_src, cv_src, latex_template, job_src)
         with st.spinner("Fülle LaTeX-Template über OpenAI …"):
             latex_filled = call_openai_chat(api_key, model, user, system_prompt=None)
 
@@ -460,7 +604,6 @@ if export_tex_col.button(
             with st.expander("Vorschau: generiertes LaTeX", expanded=False):
                 st.code(latex_filled, language="latex")
 
-            # .tex immer anbieten
             st.download_button(
                 "⬇️ LaTeX (.tex) herunterladen",
                 data=latex_filled.encode("utf-8"),
@@ -469,7 +612,6 @@ if export_tex_col.button(
                 use_container_width=True,
             )
 
-            # PDF kompilieren (falls möglich)
             with st.spinner("Kompiliere LaTeX zu PDF …"):
                 pdf_bytes, log = compile_latex_to_pdf(latex_filled)
 
@@ -494,5 +636,6 @@ st.caption(
     "• Für beste Ergebnisse vollständigen CV-Text und die komplette Stellenanzeige verwenden. "
     "• Der generierte Text ist ein Entwurf – bitte inhaltlich prüfen und ggf. anpassen. "
     "• LaTeX-Export benötigt lokal 'pdflatex' und die Klasse 'moderncv'. Ohne pdflatex kannst du die .tex-Datei herunterladen und lokal kompilieren. "
-    "• PDF-Export (ohne LaTeX) nutzt Standardschrift; Sonderzeichen werden bei Bedarf ersetzt."
+    "• PDF-Export (ohne LaTeX) nutzt Standardschrift; Sonderzeichen werden bei Bedarf ersetzt. "
+    "• Für URL-Import ggf. 'pip install requests beautifulsoup4' ausführen."
 )
