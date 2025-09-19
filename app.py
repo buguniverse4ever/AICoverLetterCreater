@@ -280,7 +280,7 @@ if not st.session_state.refine_prompt:
     )
 if not st.session_state.latex_prompt:
     st.session_state.latex_prompt = (
-        "Ersetze das ModernCV-LaTeX-Template mit dem Brieftext. Wichtige stellen sollen mit einem \textbf{} markiert werden."
+        "Ersetze das ModernCV-LaTeX-Template mit dem Brieftext. Wichtige stellen sollen mit einem \\textbf{} markiert werden."
     )
 
 with st.sidebar:
