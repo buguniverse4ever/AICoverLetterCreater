@@ -198,10 +198,6 @@ def build_refine_user_prompt(current_letter: str, change_request: str, cv_text: 
 
 
 def build_latex_fill_prompt(letter_text: str, cv_text: str, latex_template: str, job_text: str, header: dict) -> str:
-    """
-    Stellt dem Modell optional ausfüllbare Kopf-Felder bereit.
-    Nur NICHT-LEERE Felder sollen ersetzt/gesetzt werden, leere unverändert lassen.
-    """
     header_instructions = (
         "- Setze die folgenden Felder NUR, wenn ein Wert angegeben ist; lasse sie sonst unverändert:\n"
         "  * \\name{Vorname}{Nachname}\n"
@@ -232,6 +228,7 @@ def build_latex_fill_prompt(letter_text: str, cv_text: str, latex_template: str,
         "- Kopf-/Kontaktdaten bitte gemäß den optionalen Feldern setzen (siehe unten). Leere Felder unverändert lassen.\n"
         "- Belasse sonstige Präambel/Packages.\n"
         "- ESCAPE alle LaTeX-Sonderzeichen (# $ % & _ { } ~ ^ \\\\) korrekt.\n"
+        "- ÄNDERE WEDER \\moderncvstyle NOCH \\moderncvcolor; belasse sie exakt wie im Template.\n"
         "- Keine Erklärungen, KEINE Markdown-Fences, NUR LaTeX.\n\n"
         "=== OPTIONALE KOPF-FELDER ===\n"
         f"{header_instructions}\n"
@@ -389,9 +386,20 @@ for key, default in [
     ("recipient_company",""),
     ("recipient_dept",""),
     ("opening_line",""),
+    # Prompt-Update Queue
+    ("_apply_prompt_updates", False),
+    ("_queued_prompts", {}),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
+
+# ---- queued prompt updates anwenden, bevor Widgets erzeugt werden ----
+if st.session_state.get("_apply_prompt_updates"):
+    queued = st.session_state.get("_queued_prompts", {}) or {}
+    for k, v in queued.items():
+        st.session_state[k] = v
+    st.session_state["_apply_prompt_updates"] = False
+    st.session_state["_queued_prompts"] = {}
 
 with st.sidebar:
     st.subheader("🔐 OpenAI")
@@ -445,7 +453,7 @@ with load_btn_col:
 with col2:
     job_text = st.text_area("Stellenanzeige (Text)", key="job_text", placeholder="Füge hier die vollständige Stellenanzeige ein …", height=260)
 
-# 📌 Briefkopf-Felder (optional) – diese steuern die LaTeX-Header-Ersetzung durch das Modell
+# 📌 Briefkopf-Felder (optional) – LaTeX-Header
 with st.expander("📌 Briefkopf-Felder (optional)", expanded=False):
     s1, s2 = st.columns(2, gap="large")
     with s1:
@@ -505,7 +513,7 @@ def build_defaults_if_empty():
             ]}
         )
 
-def regenerate_prompts():
+def queue_regenerated_prompts():
     cv_src = truncate(st.session_state.get("cv_text_cache", ""))
     job_src = truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", "")))
     current_letter = st.session_state.get("letter_text", "")
@@ -515,10 +523,14 @@ def regenerate_prompts():
         "sender_first","sender_last","sender_addr1","sender_addr2","sender_country",
         "sender_phone","sender_email","recipient_company","recipient_dept","opening_line"
     ]}
-    st.session_state["sys_prompt"] = build_system_prompt()
-    st.session_state["initial_user_prompt"] = build_initial_user_prompt(cv_src, job_src)
-    st.session_state["refine_user_prompt"] = build_refine_user_prompt(current_letter, change_req, cv_src, job_src)
-    st.session_state["latex_user_prompt"] = build_latex_fill_prompt(current_letter, cv_src, latex_template, job_src, header)
+    queued = {
+        "sys_prompt": build_system_prompt(),
+        "initial_user_prompt": build_initial_user_prompt(cv_src, job_src),
+        "refine_user_prompt": build_refine_user_prompt(current_letter, change_req, cv_src, job_src),
+        "latex_user_prompt": build_latex_fill_prompt(current_letter, cv_src, latex_template, job_src, header),
+    }
+    st.session_state["_queued_prompts"] = queued
+    st.session_state["_apply_prompt_updates"] = True
 
 with st.expander("🧠 Prompts (bearbeitbar)", expanded=False):
     st.caption("Diese Prompts werden 1:1 an das Modell gesendet. Mit „Vorschläge übernehmen“ kannst du sie aus den aktuellen Eingaben neu generieren.")
@@ -532,8 +544,8 @@ with st.expander("🧠 Prompts (bearbeitbar)", expanded=False):
         st.text_area("User-Prompt: LaTeX füllen", key="latex_user_prompt", height=220)
 
     if st.button("🔄 Vorschläge übernehmen (aus aktuellen Eingaben neu generieren)"):
-        regenerate_prompts()
-        st.success("Prompts aktualisiert.")
+        queue_regenerated_prompts()
+        st.success("Prompts werden aktualisiert.")
 
 st.markdown("---")
 
@@ -663,9 +675,17 @@ if export_tex_col.button("🧪 LaTeX-PDF erzeugen", use_container_width=True, di
         latex_filled = call_openai_chat(api_key, model_id, user, system_prompt=None) or ""
         latex_filled = strip_code_fences(latex_filled).strip()
 
-        # Guardrails: Struktur + nur Briefkörper prüfen (Header darf Platzhalter vom Template behalten, wenn Felder leer)
+        # Korrektur häufiger Stil-Tippfehler: \moderncvstyle{bank} -> {banking}
+        try:
+            latex_filled = re.sub(r"\\moderncvstyle\{bank\}", r"\\moderncvstyle{banking}", latex_filled)
+        except Exception:
+            pass
+
+        # Guardrails: Struktur + nur Briefkörper prüfen
         missing_structure = not (
-            "\\documentclass" in latex_filled and "\\begin{document}" in latex_filled and "\\end{document}" in latex_filled
+            "\\documentclass" in latex_filled
+            and "\\begin{document}" in latex_filled
+            and "\\end{document}" in latex_filled
         )
         body_match = re.search(r"\\makelettertitle(.*?)\\makeletterclosing", latex_filled, flags=re.DOTALL)
         letter_body = body_match.group(1) if body_match else latex_filled
