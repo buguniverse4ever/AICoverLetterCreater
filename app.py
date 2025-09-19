@@ -33,52 +33,51 @@ except Exception:
 
 # -------------------------------- Defaults --------------------------------
 
-DEFAULT_LATEX_TEMPLATE = r"""%% start of file `template_de.tex'
+DEFAULT_LATEX_TEMPLATE = r"""
+%% start of file 'anschreiben.tex'
 \documentclass[11pt,a4paper,roman]{moderncv}
+\usepackage[ngerman]{babel}
 
-% --- Sprache & Encoding ---
-\usepackage[ngerman]{babel}     % deutsche Silbentrennung/Typografie
-\usepackage[T1]{fontenc}        % saubere Umlaute in PDF-Fonts
-\usepackage[utf8]{inputenc}     % UTF-8 Eingabe (bei pdflatex)
+% moderncv themes
+\moderncvstyle{classic}
+\moderncvcolor{green}
 
-% --- moderncv-Theme ---
-\moderncvstyle{classic}         % 'casual', 'classic', 'oldstyle', 'banking'
-\moderncvcolor{green}           % 'blue', 'orange', 'green', 'red', 'purple', 'grey', 'black'
+% character encoding
+\usepackage[utf8]{inputenc}
 
-% --- Seitenränder ---
+% adjust the page margins
 \usepackage[scale=0.75]{geometry}
 
-% --- Persönliche Daten (Beispiele; kann OpenAI/Script füllen) ---
-\name{Vorname}{Nachname}
-\title{Bewerbungstitel} % optional
-\address{Straße Hausnummer}{PLZ Ort}{Deutschland}
-\phone[mobile]{+49 000 0000000}
-\email{dein.name@mail.de}
-% \homepage{www.deineseite.de}
-% \photo[64pt][0.4pt]{bilddatei} % optional
+% personal data
+\name{Lorem}{Ipsum}
+\title{Bewerbung als \textbf{Specialist Softwareentwicklung (w/m/d)}}
+\address{Loremstraße 123}{12345 Ipsumstadt}{Deutschland}
+\phone[mobile]{+49~170~0000000}
+\email{lorem.ipsum@example.com}
 
 \begin{document}
 
-% --- Brief-Metadaten ---
-\recipient{Ansprechpartner/in}{Abteilung, Firma}
+%-----       letter       ---------------------------------------------------------
+% recipient data
+\recipient{\textbf{Lorem Consulting GmbH}}{Personalabteilung}
 \date{\today}
-\opening{Sehr geehrte Damen und Herren,} % ggf. personalisieren: "Sehr geehrte Frau Muster,"
+\opening{Sehr geehrte Damen und Herren,}
 \closing{Mit freundlichen Grüßen}
-\enclosure[Anlagen]{Lebenslauf} % Text rechts unten unter der Unterschrift
+% \enclosure[Anlagen]{Lebenslauf, Zeugnisse}
 \makelettertitle
 
-% === Anschreiben beginnt ===
-{{LETTER}}
-% === Anschreiben endet ===
+Mit großem Interesse bewerbe ich mich als \textbf{Specialist Softwareentwicklung}. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed non arcu eget ipsum efficitur luctus. Integer in sapien vel metus interdum euismod. Aenean bibendum, mi a rhoncus pretium, \textbf{qualitativ hochwertige Software} fermentum magna, vitae tempus arcu ipsum a metus.
 
-% (Optional) Kurzhinweise aus dem Lebenslauf:
-% {{CV}}
+Suspendisse potenti. Quisque vitae orci id risus gravida vulputate. Curabitur ut ante vitae neque elementum accumsan. Phasellus pharetra, elit non porta aliquet, leo libero faucibus arcu, a efficitur arcu lacus ut risus. In sit amet nibh finibus, \textbf{Skalierbarkeit}, luctus dolor in, maximus sem. Praesent \textbf{agile Zusammenarbeit} und \textbf{saubere Schnittstellen} als zentrale Arbeitsweise.
+
+Praesent a magna sed nibh vestibulum volutpat. Etiam venenatis, lorem at dictum euismod, orci enim hendrerit sem, at ullamcorper urna lectus id nunc. Mauris pulvinar, lorem et mattis elementum, nunc justo luctus mi, a convallis lorem arcu a tortor. Donec ac nisl at quam ultricies varius, mit Fokus auf \textbf{Backend-Entwicklung}, \textbf{Datenverarbeitung} und \textbf{stabile Produktionssysteme}.
+
+Nullam nec purus non risus hendrerit sodales. Integer pulvinar sem ac nunc blandit, nec ultricies turpis pharetra. Pellentesque habitant morbi tristique senectus et netus et malesuada fames ac turpis egestas. Cras dictum tincidunt elit, in pretium quam bibendum vitae. Ich freue mich darauf, \textbf{Prototypen iterativ zu entwickeln} und \textbf{messbaren Nutzen} zu schaffen.
 
 \makeletterclosing
 
 \end{document}
-%% end of file `template_de.tex'
-
+%% end of file 'anschreiben.tex'
 """
 
 
