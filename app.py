@@ -574,50 +574,64 @@ st.text_area(
 # Buttons: Generieren & Verbessern & Exporte
 generate_col, refine_col, export_col, export_tex_col = st.columns([1, 1, 1, 1])
 
+# ----------------- FIXED: Anschreiben erstellen (immer frischer Prompt + harte Validierung) -----------------
 clicked_generate = generate_col.button(
     "🪄 Anschreiben erstellen",
     use_container_width=True,
-    disabled=not (api_key and (st.session_state.get("cv_text_cache") or cv_text) and (st.session_state.get("job_text") or st.session_state.get("job_text_cache")))
+    disabled=not api_key
 )
 
+if clicked_generate:
+    if not api_key:
+        st.error("Bitte gib zuerst deinen OpenAI API Key ein.")
+    else:
+        # Caches ggf. aktualisieren (falls gerade neu geladen/eingegeben)
+        if 'cv_text' in locals() and cv_text:
+            st.session_state.cv_text_cache = truncate(cv_text)
+        if st.session_state.get("job_text"):
+            st.session_state.job_text_cache = truncate(st.session_state["job_text"])
+
+        # harte Validierung
+        cv_src = (st.session_state.get("cv_text_cache") or "").strip()
+        job_src = (st.session_state.get("job_text_cache", st.session_state.get("job_text", "")) or "").strip()
+
+        missing = []
+        if not cv_src:
+            missing.append("CV-Text (PDF hochladen)")
+        if not job_src:
+            missing.append("Stellenanzeige (Text eingeben oder per URL laden)")
+
+        if missing:
+            st.warning("Bitte zuerst bereitstellen: " + ", ".join(missing) + ".")
+        else:
+            sys = st.session_state.get("sys_prompt") or build_system_prompt()
+            user = build_initial_user_prompt(truncate(cv_src), truncate(job_src))
+
+            with st.spinner("Erzeuge Anschreiben …"):
+                letter = call_openai_chat(api_key, model_id, user, system_prompt=sys)
+
+            if letter:
+                st.session_state.letter_text = letter
+                st.success("Anschreiben erstellt!")
+            else:
+                st.error("Keine Antwort vom Modell erhalten. Bitte erneut versuchen.")
+
+# ----------------- Überarbeiten mit Änderungswünschen (immer frischer Prompt) -----------------
 clicked_refine = refine_col.button(
     "🔁 Überarbeiten mit Änderungswünschen",
     use_container_width=True,
     disabled=not (api_key and st.session_state.letter_text)
 )
 
-# --- Aktionen vor dem Editor ---
-
-if clicked_generate:
-    if not api_key:
-        st.error("Bitte gib zuerst deinen OpenAI API Key ein.")
-    else:
-        if cv_text:
-            st.session_state.cv_text_cache = truncate(cv_text)
-        if st.session_state.get("job_text"):
-            st.session_state.job_text_cache = truncate(st.session_state["job_text"])
-
-        sys = st.session_state.sys_prompt or build_system_prompt()
-        user = st.session_state.initial_user_prompt or build_initial_user_prompt(
-            truncate(st.session_state.get("cv_text_cache", "")),
-            truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))),
-        )
-
-        letter = call_openai_chat(api_key, model_id, user, system_prompt=sys)
-        if letter:
-            st.session_state.letter_text = letter
-            st.success("Anschreiben erstellt!")
-
 if clicked_refine:
     if not api_key:
         st.error("Bitte gib zuerst deinen OpenAI API Key ein.")
     else:
-        if cv_text:
+        if 'cv_text' in locals() and cv_text:
             st.session_state.cv_text_cache = truncate(cv_text)
         if st.session_state.get("job_text"):
             st.session_state.job_text_cache = truncate(st.session_state["job_text"])
 
-        # --- harte Validierung der Quellen ---
         current_letter = (st.session_state.get("letter_text") or "").strip()
         change_req = (st.session_state.get("change_request") or "Bitte stilistisch glätten & präzisieren.").strip()
         cv_src = truncate(st.session_state.get("cv_text_cache", "")).strip()
@@ -634,7 +648,6 @@ if clicked_refine:
         if missing:
             st.warning("Bitte zuerst bereitstellen: " + ", ".join(missing) + ".")
         else:
-            # IMMER frisch bauen: kein veraltetes/leer editiertes Promptfeld nutzen
             user = build_refine_user_prompt(current_letter, change_req, cv_src, job_src)
             sys = st.session_state.get("sys_prompt") or build_system_prompt()
 
