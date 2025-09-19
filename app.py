@@ -6,6 +6,8 @@ import tempfile
 import shutil
 from pathlib import Path
 from typing import Optional, Tuple
+import unicodedata
+import os
 
 import streamlit as st
 
@@ -80,7 +82,7 @@ Suspendisse potenti. Quisque vitae orci id risus gravida vulputate. Curabitur ut
 
 Praesent a magna sed nibh vestibulum volutpat. Etiam venenatis, lorem at dictum euismod, orci enim hendrerit sem, at ullamcorper urna lectus id nunc. Mauris pulvinar, lorem et mattis elementum, nunc justo luctus mi, a convallis lorem arcu a tortor. Donec ac nisl at quam ultricies varius, mit Fokus auf \textbf{Backend-Entwicklung}, \textbf{Datenverarbeitung} und \textbf{stabile Produktionssysteme}.
 
-Nullam nec purus non risus hendrerit sodales. Integer pulvinar sem ac nunc blandit, nec ultricies turpis pharetra. Pellentesque habitant morbi tristique senectus et netus et malesuada fames ac turpis egestas. Cras dictum tincidunt elit, in pretium quam bibendum vitae. Ich freue mich darauf, \textbf{Prototypen iterativ zu entwickeln} und \textbf{messbaren Nutzen} zu schaffen.
+Nullam nec purus non risus hendrerit sodales. Integer pulvinar sem ac nunc blandit, nec ultricies turpis pharetra. Pellentesque habitant morbi tristique senectus et netus et malesuada fames ac turpis egestas. Cras dictum tincidunt elit, in Preisum quam bibendum vitae. Ich freue mich darauf, \textbf{Prototypen iterativ zu entwickeln} und \textbf{messbaren Nutzen} zu schaffen.
 
 \makeletterclosing
 
@@ -169,7 +171,7 @@ def build_system_prompt() -> str:
         "Erstelle ein prägnantes, professionelles Anschreiben (max. 1 Seite) im formellen 'Sie'-Ton. "
         "Passe Inhalt und Schwerpunkt auf die Stellenanzeige an und nutze belegbare Punkte aus dem Lebenslauf. "
         "Struktur: Absender/Betreff optional weglassen, Einstieg mit klarer Motivation, 2–3 Absätze mit relevanten "
-        "Erfahrungen/Erfolgen (quantifiziert, sofern möglich), Abschluss mit Call-to-Action und freundlichem Gruß. "
+        "Erfahrungen/Erfolern (quantifiziert, sofern möglich), Abschluss mit Call-to-Action und freundlichem Gruß. "
         "Kein Markdown, keine Aufzählungszeichen, reiner Fließtext."
     )
 
@@ -238,27 +240,51 @@ def build_qa_user_prompt(cv_text: str, job_text: str, question: str) -> str:
     )
 
 
+def _transliterate_to_ascii(s: str) -> str:
+    # Verliert Umlaute, aber vermeidet Encoding-Fehler als allerletzter Fallback
+    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+
+
 def call_openai_chat(
     api_key: str,
     model: str,
     user_prompt: str,
     system_prompt: Optional[str] = None,
 ) -> str:
-    """Ruft das OpenAI-Chat-API auf und gibt den reinen Text zurück."""
+    """Ruft das OpenAI-Chat-API auf und gibt den reinen Text zurück. Mit Unicode-Fallbacks."""
     if OpenAI is None:
         st.error("Bitte installiere das OpenAI-Python-SDK: pip install openai")
         return ""
-    try:
+
+    # Sicherstellen, dass die Umgebung UTF-8 bevorzugt
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
+    def _do_call(u_prompt: str, s_prompt: Optional[str]) -> str:
         client = OpenAI(api_key=api_key)
         messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": user_prompt})
+        if s_prompt:
+            messages.append({"role": "system", "content": s_prompt})
+        messages.append({"role": "user", "content": u_prompt})
         resp = client.chat.completions.create(
             model=model,
             messages=messages,
         )
         return (resp.choices[0].message.content or "").strip()
+
+    # 1) Normaler Versuch
+    try:
+        return _do_call(user_prompt, system_prompt)
+    except UnicodeEncodeError:
+        # 2) UTF-8 „Reinigung“, ohne Informationsverlust
+        try:
+            u2 = user_prompt.encode("utf-8", "ignore").decode("utf-8")
+            s2 = system_prompt.encode("utf-8", "ignore").decode("utf-8") if system_prompt else None
+            return _do_call(u2, s2)
+        except UnicodeEncodeError:
+            # 3) Notlösung: ASCII-Transliteration (Umlaute -> weg)
+            u3 = _transliterate_to_ascii(user_prompt)
+            s3 = _transliterate_to_ascii(system_prompt) if system_prompt else None
+            return _do_call(u3, s3)
     except Exception as e:
         st.error(f"OpenAI-Fehler: {e}")
         return ""
@@ -323,38 +349,6 @@ def fetch_text_from_url(url: str) -> str:
         return ""
 
 
-# ---------- Callbacks ----------
-
-def regenerate_prompts():
-    """Setzt die vier Prompt-Felder neu aus dem aktuellen Zustand."""
-    cv_src = truncate(st.session_state.get("cv_text_cache", ""))
-    job_src = truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", "")))
-
-    current_letter = st.session_state.get("letter_text", "")
-    change_req = st.session_state.get("change_request", "Bitte stilistisch glätten & präzisieren.")
-    latex_template = st.session_state.get("latex_template", DEFAULT_LATEX_TEMPLATE)
-
-    st.session_state["sys_prompt"] = build_system_prompt()
-    st.session_state["initial_user_prompt"] = build_initial_user_prompt(cv_src, job_src)
-    st.session_state["refine_user_prompt"] = build_refine_user_prompt(current_letter, change_req, cv_src, job_src)
-    st.session_state["latex_user_prompt"] = build_latex_fill_prompt(current_letter, cv_src, latex_template, job_src)
-
-
-def load_job_from_url():
-    """Lädt die Stellenanzeige von der URL im State, setzt Textfeld & Cache und zeigt Status."""
-    url = st.session_state.get("jd_url", "")
-    if not url:
-        st.session_state["job_loaded_flag"] = ("warn", "Bitte zuerst eine URL eingeben.")
-        return
-    loaded_text = fetch_text_from_url(url)
-    if not loaded_text:
-        st.session_state["job_loaded_flag"] = ("warn", "Konnte keinen Text von der URL laden.")
-        return
-    st.session_state["job_text"] = loaded_text            # füllt die Textarea (gleicher key)
-    st.session_state["job_text_cache"] = truncate(loaded_text)
-    st.session_state["job_loaded_flag"] = ("ok", "Stellenanzeige aus URL geladen.")
-
-
 # ------------------------------- Streamlit UI -------------------------------
 
 st.set_page_config(page_title="Anschreiben-Generator (CV + Stellenanzeige)", page_icon="✉️", layout="wide")
@@ -383,7 +377,6 @@ for key, default in [
     # UI State
     ("job_text", ""),
     ("jd_url", ""),
-    ("job_loaded_flag", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -432,36 +425,32 @@ with col1:
         with st.expander("Vorschau: erkannter CV-Text"):
             st.text_area("CV-Text", (cv_text or st.session_state.get("cv_text_cache", ""))[:5000], height=200)
 
+# 🌐 Stellenanzeige aus URL laden (optional) — vor dem Textfeld!
+st.subheader("🌐 Stellenanzeige aus URL (optional)")
+url_col, load_btn_col = st.columns([3, 1])
+with url_col:
+    jd_url = st.text_input("URL der Stellenanzeige", key="jd_url", placeholder="https://…")
+with load_btn_col:
+    if st.button("Anzeige von URL laden", use_container_width=True):
+        if not jd_url:
+            st.warning("Bitte zuerst eine URL eingeben.")
+        else:
+            loaded_text = fetch_text_from_url(jd_url)
+            if loaded_text:
+                st.session_state["job_text"] = loaded_text
+                st.session_state["job_text_cache"] = truncate(loaded_text)
+                st.success("Stellenanzeige aus URL geladen.")
+            else:
+                st.warning("Konnte keinen Text von der URL laden.")
+
 with col2:
-    # --- Stellenanzeige Eingabe (state-fähig) ---
+    # --- Stellenanzeige Eingabe (state-fähig); wird mit obigem State befüllt
     job_text = st.text_area(
         "Stellenanzeige (Text)",
         key="job_text",
         placeholder="Füge hier die vollständige Stellenanzeige ein …",
         height=260
     )
-
-# 🌐 Stellenanzeige aus URL laden (optional)
-st.subheader("🌐 Stellenanzeige aus URL (optional)")
-url_col, load_btn_col = st.columns([3, 1])
-with url_col:
-    st.text_input("URL der Stellenanzeige", key="jd_url", placeholder="https://…")
-with load_btn_col:
-    st.button(
-        "Anzeige von URL laden",
-        use_container_width=True,
-        on_click=load_job_from_url,   # nutzt st.session_state["jd_url"]
-    )
-
-# Statusanzeige nach Callback
-if st.session_state.get("job_loaded_flag"):
-    status, msg = st.session_state["job_loaded_flag"]
-    if status == "ok":
-        st.success(msg)
-    else:
-        st.warning(msg)
-    # einmalig anzeigen, danach zurücksetzen
-    st.session_state["job_loaded_flag"] = None
 
 # LaTeX-Template: Upload oder Default bearbeiten
 with st.expander("📄 LaTeX-Template (optional – für Template-PDF)", expanded=False):
@@ -485,10 +474,7 @@ with st.expander("📄 LaTeX-Template (optional – für Template-PDF)", expande
 st.markdown("---")
 
 # --- Prompt-Editor (ausklappbar, default zu) ---
-with st.expander("🧠 Prompts (bearbeitbar)", expanded=False):
-    st.caption("Diese Prompts werden 1:1 an das Modell gesendet. Mit „Vorschläge übernehmen“ kannst du sie aus den aktuellen Eingaben neu generieren.")
-
-    # Defaults nur setzen, wenn leer
+def build_defaults_if_empty():
     if not st.session_state.sys_prompt:
         st.session_state.sys_prompt = build_system_prompt()
     if not st.session_state.initial_user_prompt:
@@ -511,6 +497,21 @@ with st.expander("🧠 Prompts (bearbeitbar)", expanded=False):
             truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))),
         )
 
+def regenerate_prompts():
+    cv_src = truncate(st.session_state.get("cv_text_cache", ""))
+    job_src = truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", "")))
+    current_letter = st.session_state.get("letter_text", "")
+    change_req = st.session_state.get("change_request", "Bitte stilistisch glätten & präzisieren.")
+    latex_template = st.session_state.get("latex_template", DEFAULT_LATEX_TEMPLATE)
+    st.session_state["sys_prompt"] = build_system_prompt()
+    st.session_state["initial_user_prompt"] = build_initial_user_prompt(cv_src, job_src)
+    st.session_state["refine_user_prompt"] = build_refine_user_prompt(current_letter, change_req, cv_src, job_src)
+    st.session_state["latex_user_prompt"] = build_latex_fill_prompt(current_letter, cv_src, latex_template, job_src)
+
+with st.expander("🧠 Prompts (bearbeitbar)", expanded=False):
+    st.caption("Diese Prompts werden 1:1 an das Modell gesendet. Mit „Vorschläge übernehmen“ kannst du sie aus den aktuellen Eingaben neu generieren.")
+    build_defaults_if_empty()
+
     # Zwei Spalten mit den Textfeldern
     p1, p2 = st.columns(2, gap="large")
     with p1:
@@ -520,8 +521,10 @@ with st.expander("🧠 Prompts (bearbeitbar)", expanded=False):
         st.text_area("User-Prompt: Anschreiben ÜBERARBEITEN", key="refine_user_prompt", height=220)
         st.text_area("User-Prompt: LaTeX füllen", key="latex_user_prompt", height=180)
 
-    # Button nutzt Callback → verhindert StreamlitAPIException
-    st.button("🔄 Vorschläge übernehmen (aus aktuellen Eingaben neu generieren)", on_click=regenerate_prompts)
+    # Button – einfache Funktion (kein Callback nötig)
+    if st.button("🔄 Vorschläge übernehmen (aus aktuellen Eingaben neu generieren)"):
+        regenerate_prompts()
+        st.success("Prompts aktualisiert.")
 
 st.markdown("---")
 
@@ -599,7 +602,7 @@ if clicked_generate:
         if st.session_state.get("job_text"):
             st.session_state.job_text_cache = truncate(st.session_state["job_text"])
 
-        sys = st.session_state.sys_prompt
+        sys = st.session_state.sys_prompt or build_system_prompt()
         user = st.session_state.initial_user_prompt or build_initial_user_prompt(
             truncate(st.session_state.get("cv_text_cache", "")),
             truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))),
@@ -619,7 +622,7 @@ if clicked_refine:
         if st.session_state.get("job_text"):
             st.session_state.job_text_cache = truncate(st.session_state["job_text"])
 
-        sys = st.session_state.sys_prompt
+        sys = st.session_state.sys_prompt or build_system_prompt()
         user = st.session_state.refine_user_prompt or build_refine_user_prompt(
             st.session_state.letter_text or "",
             st.session_state.change_request or "Bitte stilistisch glätten & präzisieren.",
