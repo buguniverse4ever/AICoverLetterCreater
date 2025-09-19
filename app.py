@@ -81,10 +81,6 @@ Mit großem Interesse bewerbe ich mich als \textbf{Specialist Softwareentwicklun
 
 Suspendisse potenti. Quisque vitae orci id risus gravida vulputate. Curabitur ut ante vitae neque elementum accumsan. Phasellus pharetra, elit non porta aliquet, leo libero faucibus arcu, a efficitur arcu lacus ut risus. In sit amet nibh finibus, \textbf{Skalierbarkeit}, luctus dolor in, maximus sem. Praesent \textbf{agile Zusammenarbeit} und \textbf{saubere Schnittstellen} als zentrale Arbeitsweise.
 
-Praesent a magna sed nibh vestibulum volutpat. Etiam venenatis, lorem at dictum euismod, orci enim hendrerit sem, at ullamcorper urna lectus id nunc. Mauris pulvinar, lorem et mattis elementum, nunc justo luctus mi, a convallis lorem arcu a tortor. Donec ac nisl at quam ultricies varius, mit Fokus auf \textbf{Backend-Entwicklung}, \textbf{Datenverarbeitung} und \textbf{stabile Produktionssysteme}.
-
-Nullam nec purus non risus hendrerit sodales. Integer pulvinar sem ac nunc blandit, nec ultricies turpis pharetra. Pellentesque habitant morbi tristique senectus et netus et malesuada fames ac turpis egestas. Cras dictum tincidunt elit, in pretium quam bibendum vitae. Ich freue mich darauf, \textbf{Prototypen iterativ zu entwickeln} und \textbf{messbaren Nutzen} zu schaffen.
-
 \makeletterclosing
 
 \end{document}
@@ -284,10 +280,7 @@ if not st.session_state.refine_prompt:
     )
 if not st.session_state.latex_prompt:
     st.session_state.latex_prompt = (
-        "Fülle das ModernCV-LaTeX-Template mit dem Brieftext. "
-        "Ersetze ausschließlich den Text zwischen \\makelettertitle und \\makeletterclosing vollständig. "
-        "Kopf-/Kontaktdaten nur setzen, wenn Werte angegeben sind; andere Präambel unangetastet lassen. "
-        "Kein Lorem/Platzhalter im Briefkörper, keine Erklärungen, nur LaTeX."
+        "Ersetze das ModernCV-LaTeX-Template mit dem Brieftext. Wichtige stellen sollen mit einem \textbf{} markiert werden."
     )
 
 with st.sidebar:
