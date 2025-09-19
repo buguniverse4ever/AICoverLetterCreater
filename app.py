@@ -80,7 +80,7 @@ Suspendisse potenti. Quisque vitae orci id risus gravida vulputate. Curabitur ut
 
 Praesent a magna sed nibh vestibulum volutpat. Etiam venenatis, lorem at dictum euismod, orci enim hendrerit sem, at ullamcorper urna lectus id nunc. Mauris pulvinar, lorem et mattis elementum, nunc justo luctus mi, a convallis lorem arcu a tortor. Donec ac nisl at quam ultricies varius, mit Fokus auf \textbf{Backend-Entwicklung}, \textbf{Datenverarbeitung} und \textbf{stabile Produktionssysteme}.
 
-Nullam nec purus non risus hendrerit sodales. Integer pulvinar sem ac nunc blandit, nec ultricies turpis pharetra. Pellentesque habitant morbi tristique senectus et netus et malesuada fames ac turpis egestas. Cras dictum tincidunt elit, in pretium quam bibendum vitae. Ich freue mich darauf, \textbf{Prototypen iterativ zu entwickeln} und \textbf{messbaren Nutzen} zu schaffen.
+Nullam nec purus non risus hendrerit sodales. Integer pulvinar sem ac nunc blandit, nec ultricies turpis pharetra. Pellentesque habitant morbi tristique senectus et netus et malesuada fames ac turpis egestas. Cras dictum tincidunt elit, in Preisum quam bibendum vitae. Ich freue mich darauf, \textbf{Prototypen iterativ zu entwickeln} und \textbf{messbaren Nutzen} zu schaffen.
 
 \makeletterclosing
 
@@ -323,6 +323,23 @@ def fetch_text_from_url(url: str) -> str:
         return ""
 
 
+# ---------- Callback: Prompts sicher neu generieren ----------
+
+def regenerate_prompts():
+    """Setzt die vier Prompt-Felder neu aus dem aktuellen Zustand."""
+    cv_src = truncate(st.session_state.get("cv_text_cache", ""))
+    job_src = truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", "")))
+
+    current_letter = st.session_state.get("letter_text", "")
+    change_req = st.session_state.get("change_request", "Bitte stilistisch glätten & präzisieren.")
+    latex_template = st.session_state.get("latex_template", DEFAULT_LATEX_TEMPLATE)
+
+    st.session_state["sys_prompt"] = build_system_prompt()
+    st.session_state["initial_user_prompt"] = build_initial_user_prompt(cv_src, job_src)
+    st.session_state["refine_user_prompt"] = build_refine_user_prompt(current_letter, change_req, cv_src, job_src)
+    st.session_state["latex_user_prompt"] = build_latex_fill_prompt(current_letter, cv_src, latex_template, job_src)
+
+
 # ------------------------------- Streamlit UI -------------------------------
 
 st.set_page_config(page_title="Anschreiben-Generator (CV + Stellenanzeige)", page_icon="✉️", layout="wide")
@@ -348,6 +365,8 @@ for key, default in [
     # Q&A State
     ("qa_question", ""),
     ("qa_answer", ""),
+    # UI State (optional)
+    ("job_text", ""),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -356,19 +375,21 @@ with st.sidebar:
     st.subheader("🔐 OpenAI")
     api_key = st.text_input("OpenAI API Key", type="password", help="Wird nur lokal in dieser Sitzung genutzt.")
 
-    # Ein Dropdown für alle Modelle
-    model_options = [
-        "GPT-5",
-        "GPT-5 mini",
-        "GPT-5 nano",
-        "gpt-4o-mini",
-        "gpt-4o",
-        "gpt-4.1-mini",
-        "gpt-4.1",
-    ]
-    model = st.selectbox(
+    # Anzeigename -> API-ID (mit Bindestrichen)
+    MODEL_MAP = {
+        "GPT-5": "gpt-5",
+        "GPT-5 mini": "gpt-5-mini",
+        "GPT-5 nano": "gpt-5-nano",
+        "gpt-4o-mini": "gpt-4o-mini",
+        "gpt-4o": "gpt-4o",
+        "gpt-4.1-mini": "gpt-4.1-mini",
+        "gpt-4.1": "gpt-4.1",
+    }
+    MODEL_OPTIONS = list(MODEL_MAP.keys())
+
+    model_display = st.selectbox(
         "Modell",
-        options=model_options,
+        options=MODEL_OPTIONS,
         index=0,  # Default: GPT-5
         help=(
             "GPT-5: bestes Reasoning & Agentic.\n"
@@ -377,6 +398,9 @@ with st.sidebar:
             "Außerdem: gpt-4o / mini, gpt-4.1 / mini."
         )
     )
+    # ID, die an die API geht
+    model_id = MODEL_MAP.get(model_display, model_display)
+    st.caption(f"Verwendete API-ID: `{model_id}`")
 
 col1, col2 = st.columns(2, gap="large")
 
@@ -387,8 +411,9 @@ with col1:
         cv_text = extract_text_from_pdf(cv_file)
         if cv_text:
             st.success("Lebenslauf erkannt.")
+            st.session_state.cv_text_cache = truncate(cv_text)
         with st.expander("Vorschau: erkannter CV-Text"):
-            st.text_area("CV-Text", (cv_text or "")[:5000], height=200)
+            st.text_area("CV-Text", (cv_text or st.session_state.get("cv_text_cache", ""))[:5000], height=200)
 
 with col2:
     # --- Stellenanzeige Eingabe (state-fähig) ---
@@ -436,60 +461,44 @@ with st.expander("📄 LaTeX-Template (optional – für Template-PDF)", expande
 
 st.markdown("---")
 
-# Prompt-Editor
-st.subheader("🧠 Prompts (bearbeitbar)")
-st.caption("Diese Prompts werden 1:1 an das Modell gesendet. Mit „Vorschläge übernehmen“ kannst du sie aus den aktuellen Eingaben neu generieren.")
+# --- Prompt-Editor (ausklappbar, default zu) ---
+with st.expander("🧠 Prompts (bearbeitbar)", expanded=False):
+    st.caption("Diese Prompts werden 1:1 an das Modell gesendet. Mit „Vorschläge übernehmen“ kannst du sie aus den aktuellen Eingaben neu generieren.")
 
-# Defaults nur setzen, wenn leer
-if not st.session_state.sys_prompt:
-    st.session_state.sys_prompt = build_system_prompt()
-if not st.session_state.initial_user_prompt:
-    st.session_state.initial_user_prompt = build_initial_user_prompt(
-        truncate(cv_text or st.session_state.cv_text_cache),
-        truncate(job_text or st.session_state.job_text_cache),
-    )
-if not st.session_state.refine_user_prompt:
-    st.session_state.refine_user_prompt = build_refine_user_prompt(
-        st.session_state.letter_text or "",
-        st.session_state.change_request or "Bitte stilistisch glätten & präzisieren.",
-        truncate(cv_text or st.session_state.cv_text_cache),
-        truncate(job_text or st.session_state.job_text_cache),
-    )
-if not st.session_state.latex_user_prompt:
-    st.session_state.latex_user_prompt = build_latex_fill_prompt(
-        st.session_state.letter_text or "",
-        truncate(cv_text or st.session_state.cv_text_cache),
-        st.session_state.latex_template,
-        truncate(job_text or st.session_state.job_text_cache),
-    )
+    # Defaults nur setzen, wenn leer
+    if not st.session_state.sys_prompt:
+        st.session_state.sys_prompt = build_system_prompt()
+    if not st.session_state.initial_user_prompt:
+        st.session_state.initial_user_prompt = build_initial_user_prompt(
+            truncate(st.session_state.get("cv_text_cache", "")),
+            truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))),
+        )
+    if not st.session_state.refine_user_prompt:
+        st.session_state.refine_user_prompt = build_refine_user_prompt(
+            st.session_state.get("letter_text", ""),
+            st.session_state.get("change_request", "Bitte stilistisch glätten & präzisieren."),
+            truncate(st.session_state.get("cv_text_cache", "")),
+            truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))),
+        )
+    if not st.session_state.latex_user_prompt:
+        st.session_state.latex_user_prompt = build_latex_fill_prompt(
+            st.session_state.get("letter_text", ""),
+            truncate(st.session_state.get("cv_text_cache", "")),
+            st.session_state.get("latex_template", DEFAULT_LATEX_TEMPLATE),
+            truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))),
+        )
 
-p1, p2 = st.columns(2, gap="large")
-with p1:
-    st.text_area("System-Prompt", key="sys_prompt", height=180)
-    st.text_area("User-Prompt: Anschreiben ERSTELLEN", key="initial_user_prompt", height=220)
-with p2:
-    st.text_area("User-Prompt: Anschreiben ÜBERARBEITEN", key="refine_user_prompt", height=220)
-    st.text_area("User-Prompt: LaTeX füllen", key="latex_user_prompt", height=180)
+    # Zwei Spalten mit den Textfeldern
+    p1, p2 = st.columns(2, gap="large")
+    with p1:
+        st.text_area("System-Prompt", key="sys_prompt", height=180)
+        st.text_area("User-Prompt: Anschreiben ERSTELLEN", key="initial_user_prompt", height=220)
+    with p2:
+        st.text_area("User-Prompt: Anschreiben ÜBERARBEITEN", key="refine_user_prompt", height=220)
+        st.text_area("User-Prompt: LaTeX füllen", key="latex_user_prompt", height=180)
 
-if st.button("🔄 Vorschläge übernehmen (aus aktuellen Eingaben neu generieren)"):
-    st.session_state.sys_prompt = build_system_prompt()
-    st.session_state.initial_user_prompt = build_initial_user_prompt(
-        truncate(cv_text or st.session_state.cv_text_cache),
-        truncate(job_text or st.session_state.job_text_cache),
-    )
-    st.session_state.refine_user_prompt = build_refine_user_prompt(
-        st.session_state.letter_text or "",
-        st.session_state.change_request or "Bitte stilistisch glätten & präzisieren.",
-        truncate(cv_text or st.session_state.cv_text_cache),
-        truncate(job_text or st.session_state.job_text_cache),
-    )
-    st.session_state.latex_user_prompt = build_latex_fill_prompt(
-        st.session_state.letter_text or "",
-        truncate(cv_text or st.session_state.cv_text_cache),
-        st.session_state.latex_template,
-        truncate(job_text or st.session_state.job_text_cache),
-    )
-    st.success("Prompts aktualisiert.")
+    # Button nutzt Callback → verhindert StreamlitAPIException
+    st.button("🔄 Vorschläge übernehmen (aus aktuellen Eingaben neu generieren)", on_click=regenerate_prompts)
 
 st.markdown("---")
 
@@ -509,15 +518,15 @@ with qa_left:
         if not api_key:
             st.error("Bitte gib zuerst deinen OpenAI API Key ein.")
         else:
-            cv_src = truncate(st.session_state.cv_text_cache or cv_text)
-            job_src = truncate(st.session_state.job_text_cache or job_text)
+            cv_src = truncate(st.session_state.get("cv_text_cache", ""))
+            job_src = truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", "")))
             if not (cv_src and job_src):
                 st.warning("Bitte zuerst CV-Text und Stellenanzeige bereitstellen (Upload/Eingabe oder URL).")
             else:
                 qa_user = build_qa_user_prompt(cv_src, job_src, st.session_state.qa_question or "")
                 qa_sys = "Du bist ein präziser, deutschsprachiger Karriere-Assistent. Antworte knapp und konkret, ohne Bullet-Points, außer der Nutzer bittet ausdrücklich darum."
                 with st.spinner("Analysiere Kontext & beantworte Frage …"):
-                    answer = call_openai_chat(api_key, model, qa_user, system_prompt=qa_sys)
+                    answer = call_openai_chat(api_key, model_id, qa_user, system_prompt=qa_sys)
                 st.session_state.qa_answer = answer or "Keine Antwort erhalten."
 
 with qa_right:
@@ -546,13 +555,13 @@ generate_col, refine_col, export_col, export_tex_col = st.columns([1, 1, 1, 1])
 clicked_generate = generate_col.button(
     "🪄 Anschreiben erstellen",
     use_container_width=True,
-    disabled=not (api_key and (cv_text or st.session_state.cv_text_cache) and (job_text or st.session_state.job_text_cache))
+    disabled=not (api_key and (st.session_state.get("cv_text_cache") or cv_file) and (st.session_state.get("job_text") or st.session_state.get("job_text_cache")))
 )
 
 clicked_refine = refine_col.button(
     "🔁 Überarbeiten mit Änderungswünschen",
     use_container_width=True,
-    disabled=not (api_key and st.session_state.letter_text and (st.session_state.cv_text_cache or cv_text) and (st.session_state.job_text_cache or job_text))
+    disabled=not (api_key and st.session_state.letter_text and (st.session_state.get("cv_text_cache") or cv_file) and (st.session_state.get("job_text") or st.session_state.get("job_text_cache")))
 )
 
 # --- Aktionen vor dem Editor ---
@@ -561,34 +570,44 @@ if clicked_generate:
     if not api_key:
         st.error("Bitte gib zuerst deinen OpenAI API Key ein.")
     else:
+        # CV-Cache auffrischen, falls gerade geladen
+        if cv_text:
+            st.session_state.cv_text_cache = truncate(cv_text)
+        # Job-Cache auffrischen, falls Text vorhanden
+        if st.session_state.get("job_text"):
+            st.session_state.job_text_cache = truncate(st.session_state["job_text"])
+
         sys = st.session_state.sys_prompt
         user = st.session_state.initial_user_prompt or build_initial_user_prompt(
-            truncate(cv_text or st.session_state.cv_text_cache),
-            truncate(job_text or st.session_state.job_text_cache),
+            truncate(st.session_state.get("cv_text_cache", "")),
+            truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))),
         )
 
         with st.spinner("Erzeuge Anschreiben …"):
-            letter = call_openai_chat(api_key, model, user, system_prompt=sys)
+            letter = call_openai_chat(api_key, model_id, user, system_prompt=sys)
         if letter:
             st.session_state.letter_text = letter
-            st.session_state.cv_text_cache = truncate(cv_text or st.session_state.cv_text_cache)
-            st.session_state.job_text_cache = truncate(job_text or st.session_state.job_text_cache)
             st.success("Anschreiben erstellt!")
 
 if clicked_refine:
     if not api_key:
         st.error("Bitte gib zuerst deinen OpenAI API Key ein.")
     else:
+        if cv_text:
+            st.session_state.cv_text_cache = truncate(cv_text)
+        if st.session_state.get("job_text"):
+            st.session_state.job_text_cache = truncate(st.session_state["job_text"])
+
         sys = st.session_state.sys_prompt
         user = st.session_state.refine_user_prompt or build_refine_user_prompt(
             st.session_state.letter_text or "",
             st.session_state.change_request or "Bitte stilistisch glätten & präzisieren.",
-            truncate(cv_text or st.session_state.cv_text_cache),
-            truncate(job_text or st.session_state.job_text_cache),
+            truncate(st.session_state.get("cv_text_cache", "")),
+            truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))),
         )
 
         with st.spinner("Überarbeite Anschreiben …"):
-            revised = call_openai_chat(api_key, model, user, system_prompt=sys)
+            revised = call_openai_chat(api_key, model_id, user, system_prompt=sys)
         if revised:
             st.session_state.letter_text = revised
             st.success("Anschreiben überarbeitet!")
@@ -624,13 +643,13 @@ if export_tex_col.button(
     else:
         user = st.session_state.latex_user_prompt or build_latex_fill_prompt(
             st.session_state.letter_text or "",
-            truncate((cv_text or st.session_state.cv_text_cache)),
-            st.session_state.latex_template or DEFAULT_LATEX_TEMPLATE,
-            truncate((job_text or st.session_state.job_text_cache)),
+            truncate(st.session_state.get("cv_text_cache", "")),
+            st.session_state.get("latex_template", DEFAULT_LATEX_TEMPLATE),
+            truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))),
         )
 
         with st.spinner("Fülle LaTeX-Template über OpenAI …"):
-            latex_filled = call_openai_chat(api_key, model, user, system_prompt=None)
+            latex_filled = call_openai_chat(api_key, model_id, user, system_prompt=None)
 
         if latex_filled:
             latex_filled = strip_code_fences(latex_filled)
@@ -670,6 +689,5 @@ st.caption(
     "• Für beste Ergebnisse vollständigen CV-Text und die komplette Stellenanzeige verwenden (oder die URL der Anzeige laden). "
     "• Der generierte Text ist ein Entwurf – bitte inhaltlich prüfen und ggf. anpassen. "
     "• LaTeX-Export benötigt lokal 'pdflatex' und die Klasse 'moderncv'. Ohne pdflatex kannst du die .tex-Datei herunterladen und lokal kompilieren. "
-    "• PDF-Export (ohne LaTeX) nutzt Standardschrift; Sonderzeichen werden bei Bedarf ersetzt. "
     "• Für URL-Import ggf. 'pip install requests beautifulsoup4' ausführen."
 )
