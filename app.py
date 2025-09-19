@@ -340,18 +340,19 @@ def regenerate_prompts():
     st.session_state["latex_user_prompt"] = build_latex_fill_prompt(current_letter, cv_src, latex_template, job_src)
 
 
-def load_job_from_url(url: str):
-    """Lädt die Stellenanzeige von URL, setzt den Widget-State und rerunnt die App."""
+def load_job_from_url():
+    """Lädt die Stellenanzeige von der URL im State, setzt Textfeld & Cache und zeigt Status."""
+    url = st.session_state.get("jd_url", "")
     if not url:
-        st.warning("Bitte zuerst eine URL eingeben.")
+        st.session_state["job_loaded_flag"] = ("warn", "Bitte zuerst eine URL eingeben.")
         return
     loaded_text = fetch_text_from_url(url)
     if not loaded_text:
-        st.warning("Konnte keinen Text von der URL laden.")
+        st.session_state["job_loaded_flag"] = ("warn", "Konnte keinen Text von der URL laden.")
         return
-    st.session_state["job_text"] = loaded_text
+    st.session_state["job_text"] = loaded_text            # füllt die Textarea (gleicher key)
     st.session_state["job_text_cache"] = truncate(loaded_text)
-    st.rerun()
+    st.session_state["job_loaded_flag"] = ("ok", "Stellenanzeige aus URL geladen.")
 
 
 # ------------------------------- Streamlit UI -------------------------------
@@ -382,6 +383,7 @@ for key, default in [
     # UI State
     ("job_text", ""),
     ("jd_url", ""),
+    ("job_loaded_flag", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -448,9 +450,18 @@ with load_btn_col:
     st.button(
         "Anzeige von URL laden",
         use_container_width=True,
-        on_click=load_job_from_url,
-        kwargs={"url": st.session_state.get("jd_url", "")},
+        on_click=load_job_from_url,   # nutzt st.session_state["jd_url"]
     )
+
+# Statusanzeige nach Callback
+if st.session_state.get("job_loaded_flag"):
+    status, msg = st.session_state["job_loaded_flag"]
+    if status == "ok":
+        st.success(msg)
+    else:
+        st.warning(msg)
+    # einmalig anzeigen, danach zurücksetzen
+    st.session_state["job_loaded_flag"] = None
 
 # LaTeX-Template: Upload oder Default bearbeiten
 with st.expander("📄 LaTeX-Template (optional – für Template-PDF)", expanded=False):
@@ -537,8 +548,7 @@ with qa_left:
             else:
                 qa_user = build_qa_user_prompt(cv_src, job_src, st.session_state.qa_question or "")
                 qa_sys = "Du bist ein präziser, deutschsprachiger Karriere-Assistent. Antworte knapp und konkret, ohne Bullet-Points, außer der Nutzer bittet ausdrücklich darum."
-                with st.spinner("Analysiere Kontext & beantworte Frage …"):
-                    answer = call_openai_chat(api_key, model_id, qa_user, system_prompt=qa_sys)
+                answer = call_openai_chat(api_key, model_id, qa_user, system_prompt=qa_sys)
                 st.session_state.qa_answer = answer or "Keine Antwort erhalten."
 
 with qa_right:
@@ -595,8 +605,7 @@ if clicked_generate:
             truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))),
         )
 
-        with st.spinner("Erzeuge Anschreiben …"):
-            letter = call_openai_chat(api_key, model_id, user, system_prompt=sys)
+        letter = call_openai_chat(api_key, model_id, user, system_prompt=sys)
         if letter:
             st.session_state.letter_text = letter
             st.success("Anschreiben erstellt!")
@@ -618,8 +627,7 @@ if clicked_refine:
             truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))),
         )
 
-        with st.spinner("Überarbeite Anschreiben …"):
-            revised = call_openai_chat(api_key, model_id, user, system_prompt=sys)
+        revised = call_openai_chat(api_key, model_id, user, system_prompt=sys)
         if revised:
             st.session_state.letter_text = revised
             st.success("Anschreiben überarbeitet!")
@@ -660,8 +668,7 @@ if export_tex_col.button(
             truncate(st.session_state.get("job_text_cache", st.session_state.get("job_text", ""))),
         )
 
-        with st.spinner("Fülle LaTeX-Template über OpenAI …"):
-            latex_filled = call_openai_chat(api_key, model_id, user, system_prompt=None)
+        latex_filled = call_openai_chat(api_key, model_id, user, system_prompt=None)
 
         if latex_filled:
             latex_filled = strip_code_fences(latex_filled)
