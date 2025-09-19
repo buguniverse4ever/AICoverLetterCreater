@@ -574,7 +574,7 @@ st.text_area(
 # Buttons: Generieren & Verbessern & Exporte
 generate_col, refine_col, export_col, export_tex_col = st.columns([1, 1, 1, 1])
 
-# ----------------- FIXED: Anschreiben erstellen (immer frischer Prompt + harte Validierung) -----------------
+# ----------------- Anschreiben erstellen (immer frischer Prompt + harte Validierung) -----------------
 clicked_generate = generate_col.button(
     "🪄 Anschreiben erstellen",
     use_container_width=True,
@@ -680,7 +680,7 @@ if export_col.button("📄 Als PDF herunterladen", use_container_width=True, dis
             use_container_width=True,
         )
 
-# LaTeX-PDF-Export (LLM, mit Guardrails)
+# LaTeX-PDF-Export (LLM, mit Guardrails: nur Briefkörper prüfen)
 if export_tex_col.button(
     "🧪 LaTeX-PDF erzeugen",
     use_container_width=True,
@@ -698,14 +698,22 @@ if export_tex_col.button(
         latex_filled = call_openai_chat(api_key, model_id, user, system_prompt=None) or ""
         latex_filled = strip_code_fences(latex_filled).strip()
 
-        # Guardrails: Struktur + keine Platzhalter
-        missing_structure = not ("\\documentclass" in latex_filled and "\\begin{document}" in latex_filled and "\\end{document}" in latex_filled)
-        still_placeholder = any(tok in latex_filled for tok in ["Lorem Ipsum", "Loremstraße", "Lorem Consulting GmbH"])
+        # Guardrails: Struktur + nur den Briefkörper prüfen
+        missing_structure = not (
+            "\\documentclass" in latex_filled
+            and "\\begin{document}" in latex_filled
+            and "\\end{document}" in latex_filled
+        )
+        body_match = re.search(r"\\makelettertitle(.*?)\\makeletterclosing", latex_filled, flags=re.DOTALL)
+        letter_body = body_match.group(1) if body_match else latex_filled
+
+        placeholder_tokens = ["Lorem ipsum", "Lorem Ipsum"]  # nur klassische Lorem-Varianten
+        still_placeholder = any(tok in letter_body for tok in placeholder_tokens)
 
         if missing_structure:
             st.error("Das Modell hat kein komplettes LaTeX-Dokument zurückgegeben. Bitte erneut versuchen oder den Prompt im Prompts-Panel schärfen.")
         elif still_placeholder:
-            st.error("Es scheinen noch Platzhalter/Lorem-Texte im LaTeX zu sein. Bitte den Prompt im Prompts-Panel anpassen und erneut generieren.")
+            st.error("Im Briefkörper sind noch Platzhalter/Lorem-Texte. Bitte im Prompts-Panel präzisieren und erneut generieren.")
         else:
             with st.expander("Vorschau: generiertes LaTeX", expanded=False):
                 st.code(latex_filled, language="latex")
